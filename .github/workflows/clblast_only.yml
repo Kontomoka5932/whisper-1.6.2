@@ -1,4 +1,4 @@
-name: Focus on CLBlast (Fixed PS Syntax)
+name: Focus on CLBlast (Final Fix)
 
 on:
   workflow_dispatch:
@@ -18,15 +18,15 @@ jobs:
         run: |
           $V_PATH = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
           git clone https://github.com/microsoft/vcpkg.git $V_PATH
-          # Используем & для вызова исполняемого файла из переменной
-          & "$V_PATH/vcpkg.exe" install clblast:x64-windows
+          $V_EXE = Join-Path $V_PATH "vcpkg.exe"
+          Write-Host "Using executable: $V_EXE"
+          & $V_EXE install clblast:x64-windows
           echo "$V_PATH" >> $env:VCPKG_DIR
           echo "$V_PATH/scripts/buildsystems/vcpkg.cmake" >> $env:VCPKG_TOOLCHAIN
 
       - name: Configure CMake
         shell: pwsh
         run: |
-          # Используем переменные окружения, которые записали выше
           $cmake_cmd = "cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DGGML_CLBLAST=ON -DWHISPER_CLBLAST=ON -DGGML_VULKAN=OFF -DGGML_CUDA=OFF -DWHISPER_CUDA=OFF -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_TOOLCHAIN"
           Write-Host "Executing: $cmake_cmd"
           Invoke-Expression $cmake_cmd
