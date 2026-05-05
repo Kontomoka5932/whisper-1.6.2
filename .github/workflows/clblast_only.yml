@@ -1,0 +1,49 @@
+name: Focus on CLBlast
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-clblast:
+    runs-on: windows-latest
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+        with:
+          repository: Kontomoka5932/whisper-1.6.2
+          ref: master
+
+      - name: Install vcpkg and CLBlast
+        shell: pwsh
+        run: |
+          $V_PATH = "$env:GITHUB_WORKSPACE/vcpkg"
+          git clone https://github.com/microsoft/vcpkg.git $V_PATH
+          "$V_PATH/vcpkg" install clblast:x64-windows
+          # Сохраняем путь к vcpkg прямо в переменные шага, чтобы передать в CMake
+          echo "VCPKG_DIR=$V_PATH" >> $env:GITHUB_ENV
+          echo "VCPKG_TOOLCHAIN=$V_PATH/scripts/buildsystems/vcpkg.cmake" >> $env:GITHUB_ENV
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          # Используем переменные, которые только что записали в GITHUB_ENV
+          $cmake_cmd = "cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DGGML_CLBLAST=ON -DWHISPER_CLBLAST=ON -DGGML_VULKAN=OFF -DGGML_CUDA=OFF -DWHISPER_CUDA=OFF -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_TOOLCHAIN"
+          Write-Host "Executing: $cmake_cmd"
+          Invoke-Expression $cmake_cmd
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Collect Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifact -Force
+          Copy-Item build/bin/Release/*.exe artifact/ -ErrorAction SilentlyContinue
+          Copy-Item build/bin/Release/*.dll artifact/ -ErrorAction SilentlyContinue
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-clblast-only
+          path: artifact/
