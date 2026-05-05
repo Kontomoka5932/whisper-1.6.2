@@ -1,0 +1,91 @@
+name: Build Windows CLBlast (The Bulletproof Way)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-clblast:
+    runs-on: windows-latest
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+        with:
+          repository: Kontomoka5932/whisper-1.6.2
+          ref: master
+
+      - name: Install OpenCL via vcpkg
+        shell: pwsh
+        run: |
+          vcpkg install opencl:x64-windows
+
+      - name: Fetch CLBlast and set CLBlast_DIR
+        shell: pwsh
+        run: |
+          $VERSION = "1.6.1"
+          $URL = "https://github.com/CNugteren/CLBlast/releases/download/$VERSION/CLBlast-$VERSION-windows-x64.zip"
+          
+          Write-Host "Downloading CLBlast $VERSION..."
+          C:/msys64/usr/bin/wget.exe -qO clblast.zip $URL
+          
+          Write-Host "Extracting..."
+          7z x clblast.zip -y
+          
+          # Распаковываем внутренний 7z, если он есть
+          if (Test-Path "CLBlast-$VERSION-windows-x64.7z") {
+            7z x "CLBlast-$VERSION-windows-x64.7z" -y
+          }
+          
+          # 1. Находим путь к CMake конфигам (ищем папку lib/cmake/CLBlast рекурсивно)
+          $cmake_path = Get-ChildItem -Path "." -Filter "CLBlastConfig.cmake" -Recurse | Select-Object -First 1
+          if ($cmake_path) {
+            $CL_DIR = $cmake_path.DirectoryName
+            echo "Found CLBlast_DIR: $CL_DIR"
+            echo "CLBlast_DIR=$CL_DIR" >> $env:GITHUB_ENV
+          } else {
+            Write-Error "Could not find CLBlastConfig.cmake!"
+            exit 1
+          }
+
+          # 2. Находим и копируем DLL (ищем файл clblast.dll рекурсивно)
+          $dll_file = Get-ChildItem -Path "." -Filter "clblast.dll" -Recurse | Select-Object -First 1
+          if ($dll_file) {
+            Write-Host "Found DLL at: $($dll_file.FullName)"
+            Copy-Item $dll_file.FullName "$env:GITHUB_WORKSPACE/clblast.dll"
+          } else {
+            Write-Error "Could not find clblast.dll!"
+            exit 1
+          }
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          $cmake_cmd = "cmake -S . -B build -A x64 " +
+                       "-DCMAKE_BUILD_TYPE=Release " +
+                       "-DBUILD_SHARED_LIBS=ON " +
+                       "-DGGML_CLBLAST=ON " +
+                       "-DWHISPER_CLBLAST=ON " +
+                       "-DGGML_VULKAN=OFF " +
+                       "-DGGML_CUDA=OFF " +
+                       "-DWHISPER_CUDA=OFF " +
+                       "-DCLBlast_DIR=$env:CLBlast_DIR"
+          
+          Write-Host "Executing: $cmake_cmd"
+          Invoke-Expression $cmake_cmd
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Collect Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifact -Force
+          Copy-Item build/bin/Release/*.exe artifact/ -ErrorAction SilentlyContinue
+          Copy-Item build/bin/Release/*.dll artifact/ -ErrorAction SilentlyContinue
+          if (Test-Path "clblast.dll") { Copy-Item "clblast.dll" artifact/ }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-clblast-v4
+          path: artifact/
