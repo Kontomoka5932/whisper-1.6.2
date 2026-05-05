@@ -1,4 +1,4 @@
-name: Focus on CLBlast (Final Fix)
+name: Focus on CLBlast (The "No-Nonsense" Way)
 
 on:
   workflow_dispatch:
@@ -18,9 +18,14 @@ jobs:
         run: |
           $V_PATH = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
           git clone https://github.com/microsoft/vcpkg.git $V_PATH
-          $V_EXE = Join-Path $V_PATH "vcpkg.exe"
-          Write-Host "Using executable: $V_EXE"
-          & $V_EXE install clblast:x64-windows
+          
+          # Переходим в папку и запускаем через .\
+          Push-Location $V_PATH
+          Write-Host "Current Location: $(Get-Location)"
+          Write-Host "Files in folder: $(Get-ChildItem | Select-Object -First 5)"
+          .\vcpkg.exe install clblast:x64-windows
+          Pop-Location
+          
           echo "$V_PATH" >> $env:VCPKG_DIR
           echo "$V_PATH/scripts/buildsystems/vcpkg.cmake" >> $env:VCPKG_TOOLCHAIN
 
