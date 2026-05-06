@@ -1,4 +1,4 @@
-name: Build Windows CLBlast + Stream (The Complete Way)
+name: Build Windows CLBlast + Stream (The Ultimate Fix)
 
 on:
   workflow_dispatch:
@@ -23,14 +23,39 @@ jobs:
         run: |
           $S2VER = "2.28.5"
           $URL = "https://github.com/libsdl-org/SDL/releases/download/release-$S2VER/SDL2-devel-$S2VER-VC.zip"
+          
           Write-Host "Downloading SDL2..."
           C:/msys64/usr/bin/wget.exe -qO sdl2.zip $URL
+          
+          Write-Host "Extracting..."
           7z x sdl2.zip -y
-          # Устанавливаем путь к SDL2 для CMake
-          $SDL_DIR = "$env:GITHUB_WORKSPACE/SDL2-$S2VER/cmake"
-          echo "SDL2_DIR=$SDL_DIR" >> $env:GITHUB_ENV
-          # Копируем DLL в корень для удобства
-          Copy-Item "$env:GITHUB_WORKSPACE/SDL2-$S2VER/lib/VC/x64/SDL2.dll" "$env:GITHUB_WORKSPACE/SDL2.dll"
+          
+          # РЕКУРСИВНЫЙ ПОИСК SDL2.dll
+          $sdl_dll = Get-ChildItem -Path "." -Filter "SDL2.dll" -Recurse | Select-Object -First 1
+          if ($sdl_dll) {
+            Write-Host "Found SDL2.dll at: $($sdl_dll.FullName)"
+            Copy-Item $sdl_dll.FullName "$env:GITHUB_WORKSPACE/SDL2.dll"
+            
+            # Находим папку с cmake конфигами SDL2
+            $sdl_cmake = Get-ChildItem -Path "." -Filter "SDL2Config.cmake" -Recurse | Select-Object -First 1
+            if ($sdl_cmake) {
+              $SDL_DIR = $sdl_cmake.DirectoryName
+              echo "SDL2_DIR=$SDL_DIR" >> $env:GITHUB_ENV
+              
+              # ВАЖНО: Находим родительскую папку для CMAKE_PREFIX_PATH
+              # Нам нужна папка, которая содержит 'lib' или 'include'
+              $SDL_ROOT = $sdl_cmake.DirectoryName.Replace("lib/cmake/SDL2", "").Replace("cmake", "").TrimEnd('/')
+              # Если путь все еще слишком глубокий, берем уровень выше
+              if ($SDL_ROOT.EndsWith("/")) { $SDL_ROOT = $SDL_ROOT.Substring(0, $SDL_ROOT.Length - 1) }
+              
+              echo "SDL2_ROOT=$SDL_ROOT" >> $env:GITHUB_ENV
+              Write-Host "Set SDL2_DIR to: $SDL_DIR"
+              Write-Host "Set SDL2_ROOT to: $SDL_ROOT"
+            }
+          } else {
+            Write-Error "Could not find SDL2.dll anywhere!"
+            exit 1
+          }
 
       - name: Fetch CLBlast and set CLBlast_DIR
         shell: pwsh
@@ -62,7 +87,7 @@ jobs:
       - name: Configure CMake
         shell: pwsh
         run: |
-          # Добавляем -DWHISPER_SDL2=ON, чтобы включить сборку stream.exe
+          # Добавляем CMAKE_PREFIX_PATH, чтобы CMake точно нашел SDL2
           $cmake_cmd = "cmake -S . -B build -A x64 " +
                        "-DCMAKE_BUILD_TYPE=Release " +
                        "-DBUILD_SHARED_LIBS=ON " +
@@ -73,7 +98,8 @@ jobs:
                        "-DGGML_CUDA=OFF " +
                        "-DWHISPER_CUDA=OFF " +
                        "-DCLBlast_DIR=$env:CLBlast_DIR " +
-                       "-DSDL2_DIR=$env:SDL2_DIR"
+                       "-DSDL2_DIR=$env:SDL2_DIR " +
+                       "-DCMAKE_PREFIX_PATH=`"$env:SDL2_ROOT`;$env:CLBlast_DIR`""
           
           Write-Host "Executing: $cmake_cmd"
           Invoke-Expression $cmake_cmd
@@ -86,7 +112,6 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path artifact -Force
-          # Собираем ВСЕ exe из папки bin/Release
           Copy-Item build/bin/Release/*.exe artifact/ -ErrorAction SilentlyContinue
           Copy-Item build/bin/Release/*.dll artifact/ -ErrorAction SilentlyContinue
           if (Test-Path "clblast.dll") { Copy-Item "clblast.dll" artifact/ }
@@ -95,5 +120,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-clblast-complete
+          name: whisper-clblast-complete-v7
           path: artifact/
