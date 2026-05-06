@@ -1,0 +1,99 @@
+name: Build Windows CLBlast + Stream (The Complete Way)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-clblast:
+    runs-on: windows-latest
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+        with:
+          repository: Kontomoka5932/whisper-1.6.2
+          ref: master
+
+      - name: Install OpenCL via vcpkg
+        shell: pwsh
+        run: |
+          vcpkg install opencl:x64-windows
+
+      - name: Fetch SDL2 (Required for stream.exe)
+        shell: pwsh
+        run: |
+          $S2VER = "2.28.5"
+          $URL = "https://github.com/libsdl-org/SDL/releases/download/release-$S2VER/SDL2-devel-$S2VER-VC.zip"
+          Write-Host "Downloading SDL2..."
+          C:/msys64/usr/bin/wget.exe -qO sdl2.zip $URL
+          7z x sdl2.zip -y
+          # Устанавливаем путь к SDL2 для CMake
+          $SDL_DIR = "$env:GITHUB_WORKSPACE/SDL2-$S2VER/cmake"
+          echo "SDL2_DIR=$SDL_DIR" >> $env:GITHUB_ENV
+          # Копируем DLL в корень для удобства
+          Copy-Item "$env:GITHUB_WORKSPACE/SDL2-$S2VER/lib/VC/x64/SDL2.dll" "$env:GITHUB_WORKSPACE/SDL2.dll"
+
+      - name: Fetch CLBlast and set CLBlast_DIR
+        shell: pwsh
+        run: |
+          $VERSION = "1.6.1"
+          $URL = "https://github.com/CNugteren/CLBlast/releases/download/$VERSION/CLBlast-$VERSION-windows-x64.zip"
+          
+          Write-Host "Downloading CLBlast $VERSION..."
+          C:/msys64/usr/bin/wget.exe -qO clblast.zip $URL
+          
+          Write-Host "Extracting..."
+          7z x clblast.zip -y
+          
+          if (Test-Path "CLBlast-$VERSION-windows-x64.7z") {
+            7z x "CLBlast-$VERSION-windows-x64.7z" -y
+          }
+          
+          $cmake_path = Get-ChildItem -Path "." -Filter "CLBlastConfig.cmake" -Recurse | Select-Object -First 1
+          if ($cmake_path) {
+            $CL_DIR = $cmake_path.DirectoryName
+            echo "CLBlast_DIR=$CL_DIR" >> $env:GITHUB_ENV
+          }
+
+          $dll_file = Get-ChildItem -Path "." -Filter "clblast.dll" -Recurse | Select-Object -First 1
+          if ($dll_file) {
+            Copy-Item $dll_file.FullName "$env:GITHUB_WORKSPACE/clblast.dll"
+          }
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          # Добавляем -DWHISPER_SDL2=ON, чтобы включить сборку stream.exe
+          $cmake_cmd = "cmake -S . -B build -A x64 " +
+                       "-DCMAKE_BUILD_TYPE=Release " +
+                       "-DBUILD_SHARED_LIBS=ON " +
+                       "-DGGML_CLBLAST=ON " +
+                       "-DWHISPER_CLBLAST=ON " +
+                       "-DWHISPER_SDL2=ON " +
+                       "-DGGML_VULKAN=OFF " +
+                       "-DGGML_CUDA=OFF " +
+                       "-DWHISPER_CUDA=OFF " +
+                       "-DCLBlast_DIR=$env:CLBlast_DIR " +
+                       "-DSDL2_DIR=$env:SDL2_DIR"
+          
+          Write-Host "Executing: $cmake_cmd"
+          Invoke-Expression $cmake_cmd
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Collect Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifact -Force
+          # Собираем ВСЕ exe из папки bin/Release
+          Copy-Item build/bin/Release/*.exe artifact/ -ErrorAction SilentlyContinue
+          Copy-Item build/bin/Release/*.dll artifact/ -ErrorAction SilentlyContinue
+          if (Test-Path "clblast.dll") { Copy-Item "clblast.dll" artifact/ }
+          if (Test-Path "SDL2.dll") { Copy-Item "SDL2.dll" artifact/ }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-clblast-complete
+          path: artifact/
