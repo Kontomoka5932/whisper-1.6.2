@@ -1,4 +1,4 @@
-name: Build Windows CLBlast (The Bulletproof Way)
+name: Build Windows CLBlast + Stream (The Bulletproof Way)
 
 on:
   workflow_dispatch:
@@ -18,6 +18,36 @@ jobs:
         run: |
           vcpkg install opencl:x64-windows
 
+      - name: Fetch SDL2 (Required for stream.exe)
+        shell: pwsh
+        run: |
+          $S2VER = "2.28.5"
+          $URL = "https://github.com/libsdl-org/SDL/releases/download/release-$S2VER/SDL2-devel-$S2VER-VC.zip"
+          
+          Write-Host "Downloading SDL2..."
+          C:/msys64/usr/bin/wget.exe -qO sdl2.zip $URL
+          
+          Write-Host "Extracting..."
+          7z x sdl2.zip -y
+          
+          # РЕКУРСИВНЫЙ ПОИСК SDL2.dll
+          $sdl_dll = Get-ChildItem -Path "." -Filter "SDL2.dll" -Recurse | Select-Object -First 1
+          if ($sdl_dll) {
+            Write-Host "Found SDL2.dll at: $($sdl_dll.FullName)"
+            Copy-Item $sdl_dll.FullName "$env:GITHUB_WORKSPACE/SDL2.dll"
+            
+            # Находим папку с cmake конфигами SDL2
+            $sdl_cmake = Get-ChildItem -Path "." -Filter "SDL2Config.cmake" -Recurse | Select-Object -First 1
+            if ($sdl_cmake) {
+              $SDL_DIR = $sdl_cmake.DirectoryName
+              echo "SDL2_DIR=$SDL_DIR" >> $env:GITHUB_ENV
+              Write-Host "Set SDL2_DIR to: $SDL_DIR"
+            }
+          } else {
+            Write-Error "Could not find SDL2.dll anywhere!"
+            exit 1
+          }
+
       - name: Fetch CLBlast and set CLBlast_DIR
         shell: pwsh
         run: |
@@ -30,30 +60,26 @@ jobs:
           Write-Host "Extracting..."
           7z x clblast.zip -y
           
-          # Распаковываем внутренний 7z, если он есть
           if (Test-Path "CLBlast-$VERSION-windows-x64.7z") {
             7z x "CLBlast-$VERSION-windows-x64.7z" -y
           }
           
-          # 1. Находим путь к CMake конфигам (ищем папку lib/cmake/CLBlast рекурсивно)
+          # РЕКУРСИВНЫЙ ПОИСК CLBlastConfig.cmake
           $cmake_path = Get-ChildItem -Path "." -Filter "CLBlastConfig.cmake" -Recurse | Select-Object -First 1
           if ($cmake_path) {
             $CL_DIR = $cmake_path.DirectoryName
-            echo "Found CLBlast_DIR: $CL_DIR"
             echo "CLBlast_DIR=$CL_DIR" >> $env:GITHUB_ENV
+            Write-Host "Found CLBlast_DIR: $CL_DIR"
           } else {
             Write-Error "Could not find CLBlastConfig.cmake!"
             exit 1
           }
 
-          # 2. Находим и копируем DLL (ищем файл clblast.dll рекурсивно)
+          # РЕКУРСИВНЫЙ ПОИСК clblast.dll
           $dll_file = Get-ChildItem -Path "." -Filter "clblast.dll" -Recurse | Select-Object -First 1
           if ($dll_file) {
-            Write-Host "Found DLL at: $($dll_file.FullName)"
+            Write-Host "Found clblast.dll at: $($dll_file.FullName)"
             Copy-Item $dll_file.FullName "$env:GITHUB_WORKSPACE/clblast.dll"
-          } else {
-            Write-Error "Could not find clblast.dll!"
-            exit 1
           }
 
       - name: Configure CMake
@@ -64,10 +90,12 @@ jobs:
                        "-DBUILD_SHARED_LIBS=ON " +
                        "-DGGML_CLBLAST=ON " +
                        "-DWHISPER_CLBLAST=ON " +
+                       "-DWHISPER_SDL2=ON " +
                        "-DGGML_VULKAN=OFF " +
                        "-DGGML_CUDA=OFF " +
                        "-DWHISPER_CUDA=OFF " +
-                       "-DCLBlast_DIR=$env:CLBlast_DIR"
+                       "-DCLBlast_DIR=$env:CLBlast_DIR " +
+                       "-DSDL2_DIR=$env:SDL2_DIR"
           
           Write-Host "Executing: $cmake_cmd"
           Invoke-Expression $cmake_cmd
@@ -83,9 +111,10 @@ jobs:
           Copy-Item build/bin/Release/*.exe artifact/ -ErrorAction SilentlyContinue
           Copy-Item build/bin/Release/*.dll artifact/ -ErrorAction SilentlyContinue
           if (Test-Path "clblast.dll") { Copy-Item "clblast.dll" artifact/ }
+          if (Test-Path "SDL2.dll") { Copy-Item "SDL2.dll" artifact/ }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-clblast-v4
+          name: whisper-clblast-complete-v6
           path: artifact/
